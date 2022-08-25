@@ -40,6 +40,8 @@ from sklearn.linear_model import LogisticRegression
 lr = LogisticRegression().fit(X_train, y_train)
 
 # %%
+
+
 def fmt(x):
     s = f"{x*100:.1f}"
     return rf"{s} \%" if plt.rcParams["text.usetex"] else f"{s} %"
@@ -187,19 +189,19 @@ with warnings.catch_warnings():
 # %%
 from sklearn.metrics import class_likelihood_ratios
 
-clr = class_likelihood_ratios(lr.predict(X_test), y_test)
+clr = class_likelihood_ratios(y_test, lr.predict(X_test))
 print(
     f"""Vanilla Logistic Regression
     LR+ : {clr[0]:.2f} - LR- : {clr[1]:.2f}
     """
 )
-clr = class_likelihood_ratios(balanced_lr.predict(X_test), y_test)
+clr = class_likelihood_ratios(y_test, balanced_lr.predict(X_test))
 print(
     f"""Balanced Logistic Regression
     LR+ : {clr[0]:.2f} - LR- : {clr[1]:.2f}
     """
 )
-clr = class_likelihood_ratios(weighted_lr.predict(X_test), y_test)
+clr = class_likelihood_ratios(y_test, weighted_lr.predict(X_test))
 print(
     f"""Resampled Logistic Regression
     LR+ : {clr[0]:.2f} - LR- : {clr[1]:.2f}
@@ -275,10 +277,10 @@ from sklearn.calibration import CalibrationDisplay
 fig, ax = plt.subplots(figsize=(8, 8))
 
 for name, est in {
-        "Vanilla Logistic Regression": lr,
-        "Balanced Logistic Regression": balanced_lr,
-        "Resampled Logistic Regrssion": weighted_lr,
-    }.items():
+    "Vanilla Logistic Regression": lr,
+    "Balanced Logistic Regression": balanced_lr,
+    "Resampled Logistic Regrssion": weighted_lr,
+}.items():
     disp = CalibrationDisplay.from_estimator(
         est,
         X_test,
@@ -331,12 +333,14 @@ for ax, (name, est) in zip(
         loc="lower right",
     )
     disp.ax_.set_title(name)
-    fig.suptitle("Testing Data", y=1.05)
+_ = fig.suptitle("Testing Data", y=1.05)
 
 # %%
 from sklearn.calibration import CalibratedClassifierCV
 
-calibrated_bag_lr = CalibratedClassifierCV(bag_lr, method="sigmoid").fit(X_train, y_train)
+calibrated_bag_lr = CalibratedClassifierCV(bag_lr, method="sigmoid").fit(
+    X_train, y_train
+)
 
 # %%
 fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(8 * 3, 8))
@@ -368,7 +372,7 @@ for ax, (name, est) in zip(
         loc="lower right",
     )
     disp.ax_.set_title(name)
-    fig.suptitle("Testing Data", y=1.05)
+_ = fig.suptitle("Testing Data", y=1.05)
 
 # %%
 X, y = make_classification(
@@ -387,6 +391,8 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
 lr.fit(X_train, y_train)
 bag_lr.fit(X_train, y_train)
 calibrated_bag_lr.fit(X_train, y_train)
+
+# %%
 
 # %%
 fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(8 * 3, 8))
@@ -424,10 +430,10 @@ for ax, (name, est) in zip(
 fig, ax = plt.subplots(figsize=(8, 8))
 
 for name, est in {
-        "Vanilla Logistic Regression": lr,
-        "Bag of Logistic Regression": bag_lr,
-        "Calibrated bag of Logistic Regression": calibrated_bag_lr,
-    }.items():
+    "Vanilla Logistic Regression": lr,
+    "Bag of Logistic Regression": bag_lr,
+    "Calibrated bag of Logistic Regression": calibrated_bag_lr,
+}.items():
     disp = CalibrationDisplay.from_estimator(
         est,
         X_test,
@@ -439,6 +445,174 @@ for name, est in {
     disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class: 1)", ""))
     disp.ax_.set_xlabel(disp.ax_.get_xlabel().replace("(Positive class: 1)", ""))
     disp.ax_.legend(loc="upper left")
-ax.set_title("")
+_ = ax.set_title("")
+
+# %%
+from sklearn.datasets import fetch_openml
+
+adult = fetch_openml(name="adult", version=2, as_frame=True, parser="pandas")
+
+# %%
+adult.frame.head()
+
+# %%
+X, y = adult.data, adult.target
+X = X.drop(columns=["education", "fnlwgt"])
+
+# %%
+y.value_counts()
+
+# %%
+from imblearn.datasets import make_imbalance
+
+X, y = make_imbalance(X, y, sampling_strategy={" >50K": 500})
+
+# %%
+y.value_counts()
+
+# %%
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
+
+# %%
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.compose import make_column_selector, make_column_transformer
+from sklearn.pipeline import make_pipeline
+from sklearn.ensemble import HistGradientBoostingClassifier
+
+categorical_selector = make_column_selector(dtype_include="category")
+preprocessor = make_column_transformer(
+    (
+        OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+        categorical_selector,
+    ),
+    remainder="passthrough",
+).fit(X_train, y_train)
+
+categorical_columns = [
+    "ordinalencoder" in val for val in preprocessor.get_feature_names_out()
+]
+model = make_pipeline(
+    preprocessor,
+    HistGradientBoostingClassifier(
+        max_iter=10_000,
+        early_stopping=True,
+        categorical_features=categorical_columns,
+        random_state=0,
+    ),
+)
+model.fit(X_train, y_train)
+
+# %%
+model[-1].predict(model[:-1].transform(X_test))
+
+# %%
+model.predict(X_test)
+
+# %%
+model[-1].n_iter_
+
+# %%
+model.predict(X_test)
+
+# %%
+from imblearn.metrics import classification_report_imbalanced
+
+classification_report_imbalanced(y_test, model.predict(X_test))
+
+# %%
+from sklearn.metrics import brier_score_loss
+
+_, ax = plt.subplots(figsize=(8, 8))
+disp = CalibrationDisplay.from_estimator(
+    model,
+    X_test,
+    y_test,
+    strategy="quantile",
+    n_bins=20,
+    ax=ax,
+    name="GBDT",
+)
+disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class:  >50K)", ""))
+disp.ax_.set_xlabel(disp.ax_.get_xlabel().replace("(Positive class:  >50K)", ""))
+disp.ax_.legend(loc="upper left")
+brier_score = brier_score_loss(
+    y_test, model.predict_proba(X_test)[:, 1], pos_label=" >50K"
+)
+_ = disp.ax_.set_title(f"Brier score: {brier_score:.3f}")
+
+# %%
+model_resampling = make_pipeline(
+    preprocessor,
+    CalibratedClassifierCV(
+        estimator=BalancedBaggingClassifier(
+            HistGradientBoostingClassifier(
+                max_iter=10_000,
+                early_stopping=True,
+                categorical_features=categorical_columns,
+                random_state=0,
+            ),
+            n_estimators=100,
+            random_state=0,
+        )
+    )
+)
+model_resampling
+
+# %%
+model_resampling.fit(X_train, y_train)
+
+# %%
+print(classification_report_imbalanced(y_test, model.predict(X_test)))
+
+# %%
+_, ax = plt.subplots(figsize=(8, 8))
+disp = CalibrationDisplay.from_estimator(
+    model_resampling,
+    X_test,
+    y_test,
+    strategy="quantile",
+    n_bins=20,
+    ax=ax,
+    name="GBDT",
+)
+disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class:  >50K)", ""))
+disp.ax_.set_xlabel(disp.ax_.get_xlabel().replace("(Positive class:  >50K)", ""))
+disp.ax_.legend(loc="upper left")
+brier_score = brier_score_loss(
+    y_test, model_resampling.predict_proba(X_test)[:, 1], pos_label=" >50K"
+)
+_ = disp.ax_.set_title(f"Brier score: {brier_score:.3f}")
+
+# %%
+from sklearn.metrics import RocCurveDisplay
+
+_, ax = plt.subplots(figsize=(8, 8))
+for name, est in [("Vanilla HGBDT", model), ("Resampled HBDT", model_resampling)]:
+    disp = RocCurveDisplay.from_estimator(
+        est,
+        X_test,
+        y_test,
+        response_method="predict_proba",
+        pos_label=" >50K",
+        ax=ax,
+        name=name,
+    )
+
+# %%
+from sklearn.metrics import PrecisionRecallDisplay
+
+_, ax = plt.subplots(figsize=(8, 8))
+for name, est in [("Vanilla HGBDT", model), ("Resampled HBDT", model_resampling)]:
+    disp = PrecisionRecallDisplay.from_estimator(
+        est,
+        X_test,
+        y_test,
+        response_method="predict_proba",
+        pos_label=" >50K",
+        ax=ax,
+        name=name,
+    )
 
 # %%
