@@ -27,37 +27,41 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # %%
-categorical_features = [X_train[col].dtype.kind == "i" for col in X_train.columns]
+from sklearn.compose import make_column_selector, make_column_transformer
+from sklearn.preprocessing import OrdinalEncoder
+
+preprocessor = make_column_transformer(
+    (OrdinalEncoder(), make_column_selector(dtype_include=int)),
+    remainder="passthrough",
+)
+preprocessor.fit(X_train)
 
 # %%
+categorical_features = [
+    "ordinalencoder" in name for name in preprocessor.get_feature_names_out()
+]
+
+# %%
+print("Training Vanilla HGBDT...")
+from sklearn.pipeline import make_pipeline
 from sklearn.ensemble import HistGradientBoostingClassifier
 
-model = HistGradientBoostingClassifier(
-    categorical_features=categorical_features,
-    max_iter=10_000,
-    early_stopping=True,
-    random_state=0,
-).fit(X_train, y_train)
-
-# %%
-from imblearn.ensemble import BalancedBaggingClassifier
-
-model_bag = BalancedBaggingClassifier(
-    base_estimator=HistGradientBoostingClassifier(
+model = make_pipeline(
+    preprocessor,
+    HistGradientBoostingClassifier(
         categorical_features=categorical_features,
         max_iter=10_000,
         early_stopping=True,
         random_state=0,
     ),
-    n_estimators=10,
-    n_jobs=-1,
-    random_state=0,
 ).fit(X_train, y_train)
 
 # %%
-from sklearn.calibration import CalibratedClassifierCV
+print("Training Bagged HGBDT...")
+from imblearn.ensemble import BalancedBaggingClassifier
 
-model_bag_calibrated = CalibratedClassifierCV(
+model_bag = make_pipeline(
+    preprocessor,
     BalancedBaggingClassifier(
         base_estimator=HistGradientBoostingClassifier(
             categorical_features=categorical_features,
@@ -65,12 +69,33 @@ model_bag_calibrated = CalibratedClassifierCV(
             early_stopping=True,
             random_state=0,
         ),
-        n_estimators=10,
+        n_estimators=50,
         n_jobs=-1,
         random_state=0,
     ),
-    method="sigmoid",
-    cv=3,
+).fit(X_train, y_train)
+
+# %%
+print("Training Calibrated Bagged HGBDT...")
+from sklearn.calibration import CalibratedClassifierCV
+
+model_bag_calibrated = make_pipeline(
+    preprocessor,
+    CalibratedClassifierCV(
+        BalancedBaggingClassifier(
+            base_estimator=HistGradientBoostingClassifier(
+                categorical_features=categorical_features,
+                max_iter=10_000,
+                early_stopping=True,
+                random_state=0,
+            ),
+            n_estimators=50,
+            n_jobs=-1,
+            random_state=0,
+        ),
+        method="sigmoid",
+        cv=3,
+    ),
 ).fit(X_train, y_train)
 
 # %%
@@ -216,3 +241,5 @@ print(
     "Calibrated bag normalized Gini: "
     f"{gini_normalized(y_test, model_bag_calibrated.predict(X_test)):.3f}"
 )
+
+# %%

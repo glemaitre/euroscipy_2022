@@ -482,7 +482,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 categorical_selector = make_column_selector(dtype_include="category")
 preprocessor = make_column_transformer(
     (
-        OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+        OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=255),
         categorical_selector,
     ),
     remainder="passthrough",
@@ -512,7 +512,7 @@ model_resampling = make_pipeline(
             categorical_features=categorical_columns,
             random_state=0,
         ),
-        n_estimators=100,
+        n_estimators=10,
         random_state=0,
         n_jobs=-1,
     ),
@@ -530,7 +530,7 @@ model_calibrated = make_pipeline(
                 categorical_features=categorical_columns,
                 random_state=0,
             ),
-            n_estimators=100,
+            n_estimators=10,
             random_state=0,
             n_jobs=-1,
         )
