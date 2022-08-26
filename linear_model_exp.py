@@ -290,9 +290,9 @@ for name, est in {
         name=name,
     )
     disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class: 1)", ""))
-    disp.ax_.set_xlabel(disp.ax_.get_xlabel().replace("(Positive class: 1)", ""))
+    disp.ax_.set_xlabel("Mean confidence score")
     disp.ax_.legend(loc="upper left")
-ax.set_title("")
+_ = ax.set_title("Reliability Diagram")
 
 # %%
 from imblearn.ensemble import BalancedBaggingClassifier
@@ -393,8 +393,6 @@ bag_lr.fit(X_train, y_train)
 calibrated_bag_lr.fit(X_train, y_train)
 
 # %%
-
-# %%
 fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(8 * 3, 8))
 
 for ax, (name, est) in zip(
@@ -443,9 +441,9 @@ for name, est in {
         name=name,
     )
     disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class: 1)", ""))
-    disp.ax_.set_xlabel(disp.ax_.get_xlabel().replace("(Positive class: 1)", ""))
+    disp.ax_.set_xlabel("Mean confidence score")
     disp.ax_.legend(loc="upper left")
-_ = ax.set_title("")
+_ = ax.set_title("Reliability Diagram")
 
 # %%
 from sklearn.datasets import fetch_openml
@@ -465,7 +463,7 @@ y.value_counts()
 # %%
 from imblearn.datasets import make_imbalance
 
-X, y = make_imbalance(X, y, sampling_strategy={" >50K": 500})
+X, y = make_imbalance(X, y, sampling_strategy={" >50K": 3_000})
 
 # %%
 y.value_counts()
@@ -505,45 +503,24 @@ model = make_pipeline(
 model.fit(X_train, y_train)
 
 # %%
-model[-1].predict(model[:-1].transform(X_test))
-
-# %%
-model.predict(X_test)
-
-# %%
-model[-1].n_iter_
-
-# %%
-model.predict(X_test)
-
-# %%
-from imblearn.metrics import classification_report_imbalanced
-
-classification_report_imbalanced(y_test, model.predict(X_test))
-
-# %%
-from sklearn.metrics import brier_score_loss
-
-_, ax = plt.subplots(figsize=(8, 8))
-disp = CalibrationDisplay.from_estimator(
-    model,
-    X_test,
-    y_test,
-    strategy="quantile",
-    n_bins=20,
-    ax=ax,
-    name="GBDT",
-)
-disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class:  >50K)", ""))
-disp.ax_.set_xlabel(disp.ax_.get_xlabel().replace("(Positive class:  >50K)", ""))
-disp.ax_.legend(loc="upper left")
-brier_score = brier_score_loss(
-    y_test, model.predict_proba(X_test)[:, 1], pos_label=" >50K"
-)
-_ = disp.ax_.set_title(f"Brier score: {brier_score:.3f}")
-
-# %%
 model_resampling = make_pipeline(
+    preprocessor,
+    BalancedBaggingClassifier(
+        HistGradientBoostingClassifier(
+            max_iter=10_000,
+            early_stopping=True,
+            categorical_features=categorical_columns,
+            random_state=0,
+        ),
+        n_estimators=100,
+        random_state=0,
+        n_jobs=-1,
+    ),
+)
+model_resampling.fit(X_train, y_train)
+
+# %%
+model_calibrated = make_pipeline(
     preprocessor,
     CalibratedClassifierCV(
         estimator=BalancedBaggingClassifier(
@@ -555,41 +532,36 @@ model_resampling = make_pipeline(
             ),
             n_estimators=100,
             random_state=0,
+            n_jobs=-1,
         )
-    )
+    ),
 )
-model_resampling
+model_calibrated.fit(X_train, y_train)
 
 # %%
-model_resampling.fit(X_train, y_train)
+from imblearn.metrics import classification_report_imbalanced
 
-# %%
 print(classification_report_imbalanced(y_test, model.predict(X_test)))
+print(classification_report_imbalanced(y_test, model_resampling.predict(X_test)))
+print(classification_report_imbalanced(y_test, model_calibrated.predict(X_test)))
 
 # %%
-_, ax = plt.subplots(figsize=(8, 8))
-disp = CalibrationDisplay.from_estimator(
-    model_resampling,
-    X_test,
-    y_test,
-    strategy="quantile",
-    n_bins=20,
-    ax=ax,
-    name="GBDT",
-)
-disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class:  >50K)", ""))
-disp.ax_.set_xlabel(disp.ax_.get_xlabel().replace("(Positive class:  >50K)", ""))
-disp.ax_.legend(loc="upper left")
-brier_score = brier_score_loss(
-    y_test, model_resampling.predict_proba(X_test)[:, 1], pos_label=" >50K"
-)
-_ = disp.ax_.set_title(f"Brier score: {brier_score:.3f}")
+from sklearn.metrics import classification_report
+
+print(classification_report(y_test, model.predict(X_test)))
+print(classification_report(y_test, model_resampling.predict(X_test)))
+print(classification_report(y_test, model_calibrated.predict(X_test)))
 
 # %%
-from sklearn.metrics import RocCurveDisplay
+import numpy as np
+from sklearn.metrics import RocCurveDisplay, roc_curve
 
-_, ax = plt.subplots(figsize=(8, 8))
-for name, est in [("Vanilla HGBDT", model), ("Resampled HBDT", model_resampling)]:
+fig, ax = plt.subplots(figsize=(8, 8))
+for name, est in {
+    "Vanilla": model,
+    "Bag": model_resampling,
+    "Calibrated bag": model_calibrated,
+}.items():
     disp = RocCurveDisplay.from_estimator(
         est,
         X_test,
@@ -599,12 +571,39 @@ for name, est in [("Vanilla HGBDT", model), ("Resampled HBDT", model_resampling)
         ax=ax,
         name=name,
     )
+    fpr, tpr, thresholds = roc_curve(
+        y_test, est.predict_proba(X_test)[:, 1], pos_label=" >50K"
+    )
+    prediction_threshold_idx = (
+        len(thresholds) - np.searchsorted(thresholds[::-1], 0.5) - 1
+    )
+    disp.ax_.scatter(
+        fpr[prediction_threshold_idx],
+        tpr[prediction_threshold_idx],
+        s=200,
+        edgecolor="black",
+    )
+handles, _ = disp.ax_.get_legend_handles_labels()
+disp.ax_.legend(
+    handles=handles,
+    labels=["Vanilla", "Bag", "Calibrated bag"],
+    bbox_to_anchor=(-0.1, 1.02, 1.2, 0.102),
+    loc="lower left",
+    ncol=3,
+    mode="expand",
+    borderaxespad=0.0,
+)
+_ = fig.suptitle("ROC Curve for HGBDT", y=1.05)
 
 # %%
-from sklearn.metrics import PrecisionRecallDisplay
+from sklearn.metrics import PrecisionRecallDisplay, precision_recall_curve
 
-_, ax = plt.subplots(figsize=(8, 8))
-for name, est in [("Vanilla HGBDT", model), ("Resampled HBDT", model_resampling)]:
+fig, ax = plt.subplots(figsize=(8, 8))
+for name, est in {
+    "Vanilla": model,
+    "Bag": model_resampling,
+    "Calibrated bag": model_calibrated,
+}.items():
     disp = PrecisionRecallDisplay.from_estimator(
         est,
         X_test,
@@ -614,5 +613,48 @@ for name, est in [("Vanilla HGBDT", model), ("Resampled HBDT", model_resampling)
         ax=ax,
         name=name,
     )
+    precision, recall, thresholds = precision_recall_curve(
+        y_test, est.predict_proba(X_test)[:, 1], pos_label=" >50K"
+    )
+    prediction_threshold_idx = np.searchsorted(thresholds, 0.5)
+    disp.ax_.scatter(
+        recall[prediction_threshold_idx],
+        precision[prediction_threshold_idx],
+        s=200,
+        edgecolor="black",
+    )
+handles, _ = disp.ax_.get_legend_handles_labels()
+disp.ax_.legend(
+    handles=handles,
+    labels=["Vanilla", "Bag", "Calibrated bag"],
+    bbox_to_anchor=(-0.1, 1.02, 1.2, 0.102),
+    loc="lower left",
+    ncol=3,
+    mode="expand",
+    borderaxespad=0.0,
+)
+_ = fig.suptitle("PR Curve for HGBDT", y=1.05)
+
+# %%
+_, ax = plt.subplots(figsize=(8, 8))
+
+for name, est in {
+    "Vanilla HGBDT": model,
+    "Bag of HGBDT": model_resampling,
+    "Calibrated bag of HGBDT": model_calibrated,
+}.items():
+    disp = CalibrationDisplay.from_estimator(
+        est,
+        X_test,
+        y_test,
+        strategy="quantile",
+        n_bins=20,
+        ax=ax,
+        name=name,
+    )
+    disp.ax_.set_ylabel(disp.ax_.get_ylabel().replace("(Positive class:  >50K)", ""))
+    disp.ax_.set_xlabel("Mean confidence score")
+    disp.ax_.legend(loc="upper left")
+_ = disp.ax_.set_title("Reliability Diagram")
 
 # %%
